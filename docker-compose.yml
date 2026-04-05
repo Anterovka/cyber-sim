@@ -1,0 +1,80 @@
+services:
+  # PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: cybersim-postgres
+    environment:
+      POSTGRES_DB: cybersim
+      POSTGRES_USER: cybersim_user
+      POSTGRES_PASSWORD: cybersim_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cybersim_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: cybersim-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # Rust Backend
+  backend:
+    build:
+      context: ./backend/backend
+      dockerfile: Dockerfile
+      network: host
+    container_name: cybersim-backend
+    ports:
+      - "8000:8000"
+    environment:
+      SERVER__HOST: 0.0.0.0
+      SERVER__PORT: 8000
+      SERVER__PUBLIC_URL: http://localhost:3000
+      DATABASE__URL: postgres://cybersim_user:cybersim_password@postgres:5432/cybersim
+      REDIS__URL: redis://redis:6379
+      JWT__SECRET: cybersim-secret-key-min-32-chars-long-for-security
+      JWT__EXPIRATION_HOURS: 168
+      CERTIFICATES__DIR: ./certificates
+      RUST_LOG: info,tower_http=debug,axum=debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - cert-data:/app/certificates
+    restart: unless-stopped
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: cybersim-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NODE_ENV: production
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  cert-data:
